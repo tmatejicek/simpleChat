@@ -1,4 +1,4 @@
-#!/bin/bash
+﻿#!/bin/bash
 
 # 1. Instalace Node.js a NPM
 echo "Installing Node.js and NPM"
@@ -33,7 +33,7 @@ echo "JWT_SECRET=$JWT_SECRET" > /app/.env
 
 # 7. Spuštění Aplikace
 echo "Running app"
-pm2 start /app/app.js
+pm2 start /app/app.js -u nobody --hp /app
 pm2 startup
 pm2 save
 
