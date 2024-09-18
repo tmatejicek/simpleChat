@@ -44,7 +44,7 @@ function authenticate(token) {
 }
 
 // Mapa pro uložení připojených klientů podle jejich unikátního řetězce (ID)
-const clients = new Map();
+const userConnections = new Map();
 
 wss.on('connection', (ws, req) => {
     const token = req.headers['sec-websocket-protocol'];
@@ -57,7 +57,11 @@ wss.on('connection', (ws, req) => {
 
     const userId = user.userId;
 
-    clients.set(userId, ws);
+    if (!userConnections.has(userId)) {
+        userConnections.set(userId, []);
+    }
+
+    userConnections.get(userId).push(ws);
 
     ws.on('message', (message) => {
         const data = JSON.parse(message);
@@ -66,14 +70,24 @@ wss.on('connection', (ws, req) => {
         switch (data.command) {
             case 'sendMessage':
                 // Odesílání zprávy jinému uživateli
-                const recipient = clients.get(sanitizeHtml(data.recipientId));
+                const recipient = userConnections.get(sanitizeHtml(data.recipientId));
                 if (recipient) {
-                    recipient.send(JSON.stringify({
-                        command: 'message', from: userId, message: {
-                            content: sanitizeHtml(data.message.content), type: sanitizeHtml(data.message.type)
+                    // Zpráva je poslána na všechna aktivní připojení příjemce
+                    recipient.forEach(connection => {
+                        if (connection.readyState === WebSocket.OPEN) {
+                            connection.send(JSON.stringify({
+                                command: 'message', from: userId, message: {
+                                    content: sanitizeHtml(data.message.content), type: sanitizeHtml(data.message.type)
+                                }
+                            }));
                         }
-                    }));
-                    ws.send(JSON.stringify({command: 'sendMessage', status: 'success'}));
+                    });
+                    // Potvrzení je posláno na všechna aktivní připojení odesilatele
+                    userConnections.get(userId).forEach(connection => {
+                        if (connection.readyState === WebSocket.OPEN) {
+                            connection.send(JSON.stringify({command: 'sendMessage', status: 'success'}));
+                        }
+                    });
                 } else {
                     ws.send(JSON.stringify({command: 'sendMessage', status: 'error', error: 'User not online'}));
                 }
@@ -81,7 +95,7 @@ wss.on('connection', (ws, req) => {
 
             case 'isOnline':
                 // Ověření, zda je daný uživatel online
-                const isOnline = clients.has(sanitizeHtml(data.userIdToCheck));
+                const isOnline = userConnections.has(sanitizeHtml(data.userIdToCheck));
                 ws.send(JSON.stringify({command: 'isOnline', status: isOnline}));
                 break;
 
@@ -93,7 +107,14 @@ wss.on('connection', (ws, req) => {
 
     ws.on('close', () => {
         if (userId) {
-            clients.delete(userId);
+            const connections = userConnections.get(userId) || [];
+            const index = connections.indexOf(ws);
+            if (index > -1) {
+                connections.splice(index, 1); // Odebrání pouze toto připojení
+                if (connections.length === 0) {
+                    userConnections.delete(userId);
+                }
+            }
         }
     });
 });
