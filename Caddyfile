@@ -1,0 +1,10 @@
+{
+        servers {
+                trusted_proxies static private_ranges
+        }
+}
+
+http:// {
+        reverse_proxy 127.0.0.1:8080
+}
+
