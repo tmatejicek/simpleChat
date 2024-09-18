@@ -1,4 +1,4 @@
-require('dotenv').config(); // Načte proměnné prostředí z .env souboru
+﻿require('dotenv').config(); // Načte proměnné prostředí z .env souboru
 
 const WebSocket = require('ws');
 const http = require('http');
@@ -15,6 +15,15 @@ const RATE_LIMIT_MAX = 100; // 100 požadavků
 
 // Vytvoření aplikace a serveru
 const app = express();
+
+// Nastavte ip-adresu důvěryhodného reverzního proxy serveru, například
+// haproxy nebo Apache mod proxy nebo nginx nakonfigurovaný jako proxy nebo jiné.
+// Proxy server by měl vložit ip adresu vzdáleného klienta
+// prostřednictvím hlavičky požadavku 'X-Forwarded-For' jako
+// 'X-Forwarded-For: some.client.ip.address'
+// Vložení hlavičky forward je volitelnou možností většiny proxy softwaru.
+app.set('trust proxy', '127.0.0.1');
+
 const server = http.createServer(app);
 const wss = new WebSocket.Server({server});
 
