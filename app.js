@@ -16,13 +16,11 @@ const RATE_LIMIT_MAX = 100; // 100 požadavků
 // Vytvoření aplikace a serveru
 const app = express();
 const server = http.createServer(app);
-const wss = new WebSocket.Server({ server });
+const wss = new WebSocket.Server({server});
 
 // Rate Limiting Middleware
 const limiter = rateLimit({
-    windowMs: RATE_LIMIT_WINDOW_MS,
-    max: RATE_LIMIT_MAX,
-    message: 'Too many requests, please try again later.'
+    windowMs: RATE_LIMIT_WINDOW_MS, max: RATE_LIMIT_MAX, message: 'Too many requests, please try again later.'
 });
 
 app.use(limiter);
@@ -44,7 +42,6 @@ wss.on('connection', (ws, req) => {
 
     const user = authenticate(token);
     if (!user) {
-	console.log('Invalid Token');
         ws.close(4000, 'Invalid Token');
         return;
     }
@@ -55,7 +52,7 @@ wss.on('connection', (ws, req) => {
 
     ws.on('message', (message) => {
         const data = JSON.parse(message);
-	
+
         // Zpracování příkazů
         switch (data.command) {
             case 'sendMessage':
@@ -63,27 +60,24 @@ wss.on('connection', (ws, req) => {
                 const recipient = clients.get(sanitizeHtml(data.recipientId));
                 if (recipient) {
                     recipient.send(JSON.stringify({
-                        command: 'message',
-                        from: userId,
-                        message: {
-			    content: sanitizeHtml(data.message.content),
-			    type: sanitizeHtml(data.message.type)
-			}
+                        command: 'message', from: userId, message: {
+                            content: sanitizeHtml(data.message.content), type: sanitizeHtml(data.message.type)
+                        }
                     }));
-                    ws.send(JSON.stringify({ command: 'sendMessage', status: 'success' }));
+                    ws.send(JSON.stringify({command: 'sendMessage', status: 'success'}));
                 } else {
-                    ws.send(JSON.stringify({ command: 'sendMessage', status: 'error', error: 'User not online' }));
+                    ws.send(JSON.stringify({command: 'sendMessage', status: 'error', error: 'User not online'}));
                 }
                 break;
-            
+
             case 'isOnline':
                 // Ověření, zda je daný uživatel online
                 const isOnline = clients.has(sanitizeHtml(data.userIdToCheck));
-                ws.send(JSON.stringify({ command: 'isOnline', status: isOnline }));
+                ws.send(JSON.stringify({command: 'isOnline', status: isOnline}));
                 break;
-            
+
             default:
-                ws.send(JSON.stringify({ command: 'error', message: 'Unknown command' }));
+                ws.send(JSON.stringify({command: 'error', message: 'Unknown command'}));
                 break;
         }
     });
@@ -91,7 +85,6 @@ wss.on('connection', (ws, req) => {
     ws.on('close', () => {
         if (userId) {
             clients.delete(userId);
-            console.log(`User ${userId} disconnected.`);
         }
     });
 });
