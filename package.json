@@ -6,6 +6,6 @@
     "http": "^0.0.1-security",
     "jsonwebtoken": "^9.0.2",
     "sanitize-html": "^2.13.0",
-    "ws": "^8.18.0"
+    "ws": "^8.18.2"
   }
 }
