@@ -4,7 +4,9 @@ Small authenticated WebSocket relay for direct, online-only chat messages.
 
 The service verifies short-lived HS256 JWTs, keeps active connections in memory
 and forwards messages to every active connection of the recipient. It does not
-store messages and is intentionally designed for a single server process.
+store message bodies and is intentionally designed for a single server process.
+Short-lived message identifiers are retained in memory to make client retries
+idempotent.
 
 ## Requirements
 
@@ -51,16 +53,22 @@ Non-browser clients may instead use `Authorization: Bearer <token>`. A raw JWT
 as the sole WebSocket subprotocol remains supported for compatibility, but the
 two-value form above avoids echoing the token as the selected subprotocol.
 
-Set `ALLOWED_ORIGINS` to a comma-separated allowlist for browser clients in
-production, for example `https://chat.example.com`.
+Set `ALLOWED_ORIGINS` to a comma-separated list of exact HTTP(S) origins, for
+example `https://chat.example.com`. The service refuses to start with an empty
+allowlist when `NODE_ENV=production`. Requests without an `Origin` header remain
+supported for non-browser clients.
 
 ## Protocol
 
-Send a message:
+Every client request may contain a `requestId`. The corresponding response
+echoes it so clients can correlate concurrent commands. A new message should
+also have a stable `messageId`, which the client reuses when retrying:
 
 ```json
 {
   "command": "sendMessage",
+  "requestId": "request-42",
+  "messageId": "message-42",
   "recipientId": "bob",
   "message": {
     "content": "Hello",
@@ -74,7 +82,9 @@ The recipient receives:
 ```json
 {
   "command": "message",
+  "messageId": "message-42",
   "from": "alice",
+  "timestamp": "2026-07-23T12:00:00.000Z",
   "message": {
     "content": "Hello",
     "type": "text"
@@ -82,10 +92,30 @@ The recipient receives:
 }
 ```
 
+Only the sender connection that issued the command receives its acknowledgement:
+
+```json
+{
+  "command": "sendMessage",
+  "status": "success",
+  "requestId": "request-42",
+  "messageId": "message-42",
+  "recipientId": "bob",
+  "timestamp": "2026-07-23T12:00:00.000Z"
+}
+```
+
+Retrying the same payload with the same `messageId` does not redeliver it and
+returns the stored acknowledgement with `"duplicate": true`. Reusing an
+identifier with a different payload returns `MESSAGE_ID_CONFLICT`. This
+deduplication is bounded, in memory and valid for five minutes by default.
+Legacy requests without `requestId` or `messageId` remain accepted; the server
+generates the message identifier.
+
 Check online presence:
 
 ```json
-{"command":"isOnline","userIdToCheck":"bob"}
+{"command":"isOnline","requestId":"presence-42","userIdToCheck":"bob"}
 ```
 
 Message content is converted to plain text. Clients must still render it as
@@ -100,40 +130,60 @@ Defaults include:
 - 5 simultaneous connections per user;
 - 30 connection attempts per IP per minute;
 - 100 messages per user per minute;
+- five-minute, 1000-entry-per-user message deduplication;
 - disabled WebSocket compression;
 - heartbeat cleanup and output backpressure protection;
+- graceful shutdown with close code `1001` and a five-second deadline;
 - loopback-only application listener.
 
-See [.env.example](.env.example) for configurable values. Rate-limit state and
-presence are in memory, so horizontal scaling requires a shared store/pub-sub
-layer.
+See [.env.example](.env.example) for configurable values. Rate-limit state,
+presence and message deduplication are in memory, so horizontal scaling requires
+a shared store/pub-sub layer.
 
 ## Tests
 
 ```sh
 npm run check
-npm test
+npm run lint
+npm run coverage
 npm run audit
 ```
 
 The integration tests cover health/readiness, JWT authentication and claims,
 malformed payloads, routing, sanitization, rate limiting, connection limits,
-presence cleanup, Origin filtering and payload limits.
+presence cleanup, Origin filtering, payload limits, correlated
+acknowledgements, retry deduplication and graceful shutdown. Coverage thresholds
+are 80% for lines and functions and 70% for branches.
 
-GitHub Actions runs the syntax checks, integration tests and dependency audit
-on Node.js 20, 22 and 24 for every push and pull request.
+GitHub Actions runs syntax checks, ESLint, coverage-gated integration tests and
+the production dependency audit on Node.js 20, 22 and 24 for every push and
+pull request.
+
+The executable entrypoint is intentionally small. Application code is split
+under `src/` into configuration, authentication, protocol validation,
+rate-limiting, deduplication and server lifecycle modules.
 
 ## Debian/Ubuntu deployment
 
 Run `setup.sh` as root on a clean host. It installs dependencies, creates an
-unprivileged `simplechat` user, configures systemd and prepares Caddy. Enter a
-real hostname such as `chat.example.com` to enable Caddy's automatic HTTPS.
-Use `http://localhost` only for local testing.
+unprivileged `simplechat` user, configures systemd and prepares Caddy. Each
+release is an immutable Git worktree under `/app/releases`; `/app/current` is
+switched atomically only after dependency installation, syntax checks,
+integration tests, production configuration validation and Caddy validation
+succeed. Shared secrets live in `/app/shared/.env`. Enter a real hostname such
+as `chat.example.com` to enable Caddy's automatic HTTPS. Use `http://localhost`
+only for local testing.
 
 Future updates can be applied with `update.sh`. The updater:
 
-- refuses to overwrite local Git changes;
-- accepts only fast-forward updates;
+- prepares and verifies a new detached release before activation;
+- switches `/app/current` atomically;
 - installs exactly the locked production dependencies;
-- validates Caddy configuration before replacing it;
-- restarts only the SimpleChat service.
+- validates Caddy before replacing its configuration;
+- waits for `/readyz` after restart;
+- automatically restores the previous release and system configuration when
+  activation or readiness fails.
+
+Old releases are intentionally retained for inspection or manual rollback.
+Hosts using the former single-checkout `/app` layout must be backed up and
+reinstalled once with the current `setup.sh`.

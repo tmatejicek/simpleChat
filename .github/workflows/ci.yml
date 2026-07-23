@@ -42,10 +42,11 @@ jobs:
       - name: Check JavaScript and deployment scripts
         run: |
           npm run check
+          npm run lint
           bash -n setup.sh update.sh
 
-      - name: Run integration tests
-        run: npm test
+      - name: Run integration tests with coverage
+        run: npm run coverage
 
       - name: Audit production dependencies
         run: npm audit --omit=dev

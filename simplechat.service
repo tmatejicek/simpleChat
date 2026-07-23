@@ -6,12 +6,13 @@ After=network.target
 Type=simple
 User=simplechat
 Group=simplechat
-WorkingDirectory=/app
+WorkingDirectory=/app/current
 Environment=NODE_ENV=production
-EnvironmentFile=/app/.env
-ExecStart=/usr/bin/node /app/app.js
+EnvironmentFile=/app/shared/.env
+ExecStart=/usr/bin/node /app/current/app.js
 Restart=on-failure
 RestartSec=3
+TimeoutStopSec=15
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectHome=true
