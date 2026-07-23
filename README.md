@@ -26,8 +26,8 @@ Set a base64url-safe `JWT_SECRET` containing at least 32 characters, then run:
 npm start
 ```
 
-The default WebSocket URL is `ws://127.0.0.1:8080/`. The health endpoint is
-available at `http://127.0.0.1:8080/healthz`.
+The default WebSocket URL is `ws://127.0.0.1:8080/`. Liveness and readiness
+endpoints are available at `/healthz` and `/readyz`.
 
 ## Authentication
 
@@ -116,9 +116,12 @@ npm test
 npm run audit
 ```
 
-The integration tests cover JWT rejection, malformed payloads, routing,
-sanitization, rate limiting, connection limits, Origin filtering and payload
-limits.
+The integration tests cover health/readiness, JWT authentication and claims,
+malformed payloads, routing, sanitization, rate limiting, connection limits,
+presence cleanup, Origin filtering and payload limits.
+
+GitHub Actions runs the syntax checks, integration tests and dependency audit
+on Node.js 20, 22 and 24 for every push and pull request.
 
 ## Debian/Ubuntu deployment
 

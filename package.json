@@ -9,6 +9,7 @@
     "start": "node app.js",
     "check": "node --check app.js && node --check test/app.test.js",
     "test": "node --test",
+    "verify": "npm run check && npm test",
     "audit": "npm audit --omit=dev"
   },
   "engines": {

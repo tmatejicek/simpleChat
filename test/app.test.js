@@ -1,6 +1,7 @@
 'use strict';
 
 const assert = require('node:assert/strict');
+const http = require('node:http');
 const test = require('node:test');
 const jwt = require('jsonwebtoken');
 const WebSocket = require('ws');
@@ -40,9 +41,8 @@ async function withServer(overrides, callback) {
     }
 }
 
-function openClient(url, token, options = {}) {
+function waitForOpen(ws) {
     return new Promise((resolve, reject) => {
-        const ws = new WebSocket(url, ['simplechat', `bearer.${token}`], options);
         const timer = setTimeout(() => {
             ws.terminate();
             reject(new Error('WebSocket connection timed out'));
@@ -63,6 +63,16 @@ function openClient(url, token, options = {}) {
             reject(error);
         });
     });
+}
+
+function openClient(url, token, options = {}) {
+    return waitForOpen(new WebSocket(url, ['simplechat', `bearer.${token}`], options));
+}
+
+function openAuthorizationClient(url, token) {
+    return waitForOpen(new WebSocket(url, {
+        headers: {Authorization: `Bearer ${token}`}
+    }));
 }
 
 function connectionStatus(url, token, options = {}) {
@@ -122,12 +132,111 @@ function nextClose(ws) {
     });
 }
 
+function closeClient(ws) {
+    const closed = nextClose(ws);
+    ws.close(1000, 'Test complete');
+    return closed;
+}
+
+function getJson(port, path) {
+    return new Promise((resolve, reject) => {
+        const request = http.get({
+            host: '127.0.0.1',
+            port,
+            path,
+            timeout: 2000
+        }, response => {
+            const chunks = [];
+            response.on('data', chunk => chunks.push(chunk));
+            response.on('end', () => {
+                try {
+                    resolve({
+                        statusCode: response.statusCode,
+                        headers: response.headers,
+                        body: JSON.parse(Buffer.concat(chunks).toString('utf8'))
+                    });
+                } catch (error) {
+                    reject(error);
+                }
+            });
+        });
+
+        request.on('timeout', () => {
+            request.destroy(new Error('HTTP request timed out'));
+        });
+        request.on('error', reject);
+    });
+}
+
+test('tracks lifecycle state and rejects duplicate starts', async () => {
+    const chatServer = createChatServer({
+        jwtSecret: JWT_SECRET,
+        port: 0,
+        heartbeatIntervalMs: 60 * 1000,
+        logger: silentLogger
+    });
+
+    assert.equal(chatServer.getStatus(), 'idle');
+    await chatServer.start();
+
+    try {
+        assert.equal(chatServer.getStatus(), 'running');
+        await assert.rejects(chatServer.start(), /cannot start while running/u);
+    } finally {
+        await chatServer.stop();
+    }
+
+    assert.equal(chatServer.getStatus(), 'stopped');
+});
+
+test('exposes minimal liveness and readiness endpoints', async () => {
+    await withServer({}, async ({chatServer, address}) => {
+        const health = await getJson(address.port, '/healthz');
+        const readiness = await getJson(address.port, '/readyz');
+
+        assert.equal(chatServer.getStatus(), 'running');
+        assert.equal(health.statusCode, 200);
+        assert.deepEqual(health.body, {status: 'ok'});
+        assert.equal(health.headers['cache-control'], 'no-store');
+        assert.equal(health.headers['x-powered-by'], undefined);
+        assert.equal(readiness.statusCode, 200);
+        assert.deepEqual(readiness.body, {status: 'ready'});
+    });
+});
+
 test('rejects JWTs without an expiration claim', async () => {
     await withServer({}, async ({url}) => {
         const token = jwt.sign({userId: 'alice'}, JWT_SECRET, {algorithm: 'HS256'});
         const result = await connectionStatus(url, token);
 
         assert.equal(result.statusCode, 401);
+    });
+});
+
+test('accepts bearer authentication for non-browser clients', async () => {
+    await withServer({}, async ({url}) => {
+        const alice = await openAuthorizationClient(url, createToken('alice'));
+        const reply = nextJson(alice);
+
+        alice.send(JSON.stringify({command: 'isOnline', userIdToCheck: 'alice'}));
+        assert.deepEqual(await reply, {command: 'isOnline', status: true});
+    });
+});
+
+test('enforces configured JWT issuer and audience claims', async () => {
+    await withServer({
+        jwtIssuer: 'https://auth.example.com',
+        jwtAudience: 'simple-chat'
+    }, async ({url}) => {
+        const missingClaims = await connectionStatus(url, createToken('alice'));
+        assert.equal(missingClaims.statusCode, 401);
+
+        const validToken = createToken('alice', {
+            issuer: 'https://auth.example.com',
+            audience: 'simple-chat'
+        });
+        const alice = await openClient(url, validToken);
+        assert.equal(alice.readyState, WebSocket.OPEN);
     });
 });
 
@@ -149,6 +258,24 @@ test('handles malformed JSON without dropping the connection', async () => {
             command: 'isOnline',
             status: true
         });
+    });
+});
+
+test('rejects binary messages without dropping the connection', async () => {
+    await withServer({}, async ({url}) => {
+        const alice = await openClient(url, createToken('alice'));
+        const binaryReply = nextJson(alice);
+        alice.send(Buffer.from('binary'));
+
+        assert.deepEqual(await binaryReply, {
+            command: 'error',
+            code: 'BINARY_NOT_SUPPORTED',
+            message: 'Binary messages are not supported'
+        });
+
+        const onlineReply = nextJson(alice);
+        alice.send(JSON.stringify({command: 'isOnline', userIdToCheck: 'alice'}));
+        assert.equal((await onlineReply).status, true);
     });
 });
 
@@ -226,6 +353,20 @@ test('enforces the per-user connection limit before the WebSocket handshake', as
         const secondConnection = await connectionStatus(url, createToken('alice'));
 
         assert.equal(secondConnection.statusCode, 429);
+    });
+});
+
+test('removes presence after the final user connection closes', async () => {
+    await withServer({}, async ({url}) => {
+        const alice = await openClient(url, createToken('alice'));
+        const bob = await openClient(url, createToken('bob'));
+
+        await closeClient(bob);
+        await new Promise(resolve => setImmediate(resolve));
+
+        const reply = nextJson(alice);
+        alice.send(JSON.stringify({command: 'isOnline', userIdToCheck: 'bob'}));
+        assert.deepEqual(await reply, {command: 'isOnline', status: false});
     });
 });
 

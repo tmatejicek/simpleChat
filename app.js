@@ -381,11 +381,17 @@ function createChatServer(overrides = {}) {
 
     let heartbeatTimer;
     let stopPromise;
-    let isStopping = false;
+    let lifecycleState = 'idle';
 
     app.disable('x-powered-by');
     app.get('/healthz', (req, res) => {
+        res.set('Cache-Control', 'no-store');
         res.status(200).json({status: 'ok'});
+    });
+    app.get('/readyz', (req, res) => {
+        const ready = lifecycleState === 'running';
+        res.set('Cache-Control', 'no-store');
+        res.status(ready ? 200 : 503).json({status: ready ? 'ready' : 'not_ready'});
     });
     app.use((req, res) => {
         res.status(404).json({error: 'Not found'});
@@ -429,7 +435,7 @@ function createChatServer(overrides = {}) {
     server.on('upgrade', (req, socket, head) => {
         socket.on('error', () => {});
 
-        if (isStopping) {
+        if (lifecycleState !== 'running') {
             writeUpgradeError(socket, 503, 'Service Unavailable');
             return;
         }
@@ -618,13 +624,20 @@ function createChatServer(overrides = {}) {
     }
 
     function start() {
+        if (lifecycleState !== 'idle') {
+            return Promise.reject(new Error(`Server cannot start while ${lifecycleState}`));
+        }
+        lifecycleState = 'starting';
+
         return new Promise((resolve, reject) => {
             const handleStartupError = error => {
                 server.off('listening', handleListening);
+                lifecycleState = 'idle';
                 reject(error);
             };
             const handleListening = () => {
                 server.off('error', handleStartupError);
+                lifecycleState = 'running';
                 startHeartbeat();
                 resolve(server.address());
             };
@@ -641,7 +654,7 @@ function createChatServer(overrides = {}) {
         }
 
         stopPromise = (async () => {
-            isStopping = true;
+            lifecycleState = 'stopping';
             clearInterval(heartbeatTimer);
             connectionLimiter.clear();
             messageLimiter.clear();
@@ -667,12 +680,22 @@ function createChatServer(overrides = {}) {
             });
 
             await Promise.all([serverClosed, webSocketServerClosed]);
+            lifecycleState = 'stopped';
         })();
 
         return stopPromise;
     }
 
-    return {app, server, wss, userConnections, config, start, stop};
+    return {
+        app,
+        server,
+        wss,
+        userConnections,
+        config,
+        start,
+        stop,
+        getStatus: () => lifecycleState
+    };
 }
 
 async function main() {
