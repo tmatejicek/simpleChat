@@ -1,0 +1,28 @@
+[Unit]
+Description=SimpleChat WebSocket server
+After=network.target
+
+[Service]
+Type=simple
+User=simplechat
+Group=simplechat
+WorkingDirectory=/app
+Environment=NODE_ENV=production
+EnvironmentFile=/app/.env
+ExecStart=/usr/bin/node /app/app.js
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+LockPersonality=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target

@@ -1,11 +1,24 @@
 {
+  "name": "simple-chat",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Small authenticated WebSocket chat relay",
+  "main": "app.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node app.js",
+    "check": "node --check app.js && node --check test/app.test.js",
+    "test": "node --test",
+    "audit": "npm audit --omit=dev"
+  },
+  "engines": {
+    "node": ">=20"
+  },
   "dependencies": {
     "dotenv": "^16.4.5",
-    "express": "^4.21.2",
-    "express-rate-limit": "^7.4.0",
-    "http": "^0.0.1-security",
+    "express": "^4.22.2",
     "jsonwebtoken": "^9.0.2",
     "sanitize-html": "^2.13.0",
-    "ws": "^8.18.0"
+    "ws": "^8.21.1"
   }
 }
